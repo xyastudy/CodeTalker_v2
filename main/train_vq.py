@@ -120,11 +120,7 @@ def main_worker(gpu, ngpus_per_node, args):
         if cfg.StepLR:
             scheduler.step()
         if main_process(cfg):
-            logger.info('TRAIN Epoch: {} '
-                        'loss_train: {} '
-                        'pp_train: {} '
-                        .format(epoch_log, rec_loss_train, pp_train)
-                        )
+            logger.info(f'TRAIN Epoch: {epoch_log}  loss_train: {rec_loss_train:.2e}  pp_train: {pp_train:.2f}')
             for m, s in zip([rec_loss_train, quant_loss_train, pp_train],
                             ["train/rec_loss", "train/quant_loss", "train/perplexity"]):
                 writer.add_scalar(s, m, epoch_log)
@@ -136,11 +132,7 @@ def main_worker(gpu, ngpus_per_node, args):
         if cfg.evaluate and (epoch_log % cfg.eval_freq == 0):
             rec_loss_val, quant_loss_val, pp_val = validate(val_loader, model, calc_vq_loss, epoch, cfg)
             if main_process(cfg):
-                logger.info('VAL Epoch: {} '
-                            'loss_val: {} '
-                            'pp_val: {} '
-                            .format(epoch_log, rec_loss_val, pp_val)
-                            )
+                logger.info(f'VAL Epoch: {epoch_log}  loss_val: {rec_loss_val:.2e}  pp_val: {pp_val:.2f}')
                 for m, s in zip([rec_loss_val, quant_loss_val, pp_val],
                                 ["val/rec_loss", "val/quant_loss", "val/perplexity"]):
                     writer.add_scalar(s, m, epoch_log)

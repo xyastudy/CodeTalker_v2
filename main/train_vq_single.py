@@ -115,7 +115,7 @@ def main_worker(gpu, ngpus_per_node, args):
             scheduler.step()
 
         if main_process(cfg):
-            logger.info(f'TRAIN Epoch: {epoch_log}  rec_loss: {rec_loss_train:.5f}  pp: {pp_train:.2f}')
+            logger.info(f'TRAIN Epoch: {epoch_log}  rec_loss: {rec_loss_train:.2e}  pp: {pp_train:.2f}')
             for val, tag in zip(
                 [rec_loss_train, quant_loss_train, pp_train],
                 ["train/rec_loss", "train/quant_loss", "train/perplexity"]
@@ -128,7 +128,7 @@ def main_worker(gpu, ngpus_per_node, args):
         if cfg.evaluate and val_loader and (epoch_log % cfg.eval_freq == 0):
             rec_loss_val, quant_loss_val, pp_val = validate(val_loader, model, cfg)
             if main_process(cfg):
-                logger.info(f'VAL Epoch: {epoch_log}  rec_loss: {rec_loss_val:.5f}  pp: {pp_val:.2f}')
+                logger.info(f'VAL Epoch: {epoch_log}  rec_loss: {rec_loss_val:.2e}  pp: {pp_val:.2f}')
                 for val, tag in zip(
                     [rec_loss_val, quant_loss_val, pp_val],
                     ["val/rec_loss", "val/quant_loss", "val/perplexity"]
