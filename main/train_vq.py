@@ -130,12 +130,14 @@ def main_worker(gpu, ngpus_per_node, args):
             writer.add_scalar("train/regions/other_loss", other_loss, epoch_log)
 
         if cfg.evaluate and (epoch_log % cfg.eval_freq == 0):
-            rec_loss_val, quant_loss_val, pp_val = validate(val_loader, model, calc_vq_loss, epoch, cfg)
+            rec_loss_val, quant_loss_val, pp_val, lve_val, mve_val = validate(val_loader, model, calc_vq_loss, epoch, cfg)
             if main_process(cfg):
-                logger.info(f'VAL Epoch: {epoch_log}  loss_val: {rec_loss_val:.2e}  pp_val: {pp_val:.2f}')
-                for m, s in zip([rec_loss_val, quant_loss_val, pp_val],
-                                ["val/rec_loss", "val/quant_loss", "val/perplexity"]):
-                    writer.add_scalar(s, m, epoch_log)
+                logger.info(f'VAL Epoch: {epoch_log}  loss_val: {rec_loss_val:.2e}  pp_val: {pp_val:.2f}  LVE: {lve_val:.4f}mm  MVE: {mve_val:.4f}mm')
+                for val, tag in zip(
+                    [rec_loss_val, quant_loss_val, pp_val, lve_val, mve_val],
+                    ["val/rec_loss", "val/quant_loss", "val/perplexity", "val/LVE_mm", "val/MVE_mm"]
+                ):
+                    writer.add_scalar(tag, val, epoch_log)
 
 
         if (epoch_log % cfg.save_freq == 0) and main_process(cfg):
@@ -177,9 +179,7 @@ def train(train_loader, model, loss_fn, optimizer, epoch, cfg, region_indices):
         loss_other = nn.L1Loss()(other_vertices[:, :, other_region], gt_vertices[:, :, other_region])
 
         rec_loss = loss_lip * 2.0 + loss_eye * 1.0 + loss_other * 1.0  # 给嘴部区域更大的权重
-        # 直接对全脸输出加 L1，确保三个 decoder 的加和结果收敛到真值
-        loss_full = nn.L1Loss()(out, data.view(data.shape[0], data.shape[1], -1))
-        train_loss = loss_full + rec_loss + cfg.quant_loss_weight * quant_loss.mean() + loss_zero * cfg.loss_zero_weight
+        train_loss = rec_loss + cfg.quant_loss_weight * quant_loss.mean() + loss_zero * cfg.loss_zero_weight
         _, loss_details = loss_fn(out, data, quant_loss, quant_loss_weight=cfg.quant_loss_weight)
 
         optimizer.zero_grad()
@@ -232,31 +232,32 @@ def train(train_loader, model, loss_fn, optimizer, epoch, cfg, region_indices):
 
 
 def validate(val_loader, model, loss_fn, epoch, cfg):
+    from metrics.vq_metrics import MetricMeter
     rec_loss_meter = AverageMeter()
     quant_loss_meter = AverageMeter()
     pp_meter = AverageMeter()
+    metric_meter = MetricMeter()
     model.eval()
 
     with torch.no_grad():
-        for i, (data, _, template, _, _) in enumerate(val_loader):
+        for data, _, template, _, _ in val_loader:
             data = data.cuda(cfg.gpu, non_blocking=True)
             template = template.cuda(cfg.gpu, non_blocking=True)
 
             out, quant_loss, info, _ = model(data, template)
 
-            # LOSS
             loss, loss_details = loss_fn(out, data, quant_loss, quant_loss_weight=cfg.quant_loss_weight)
-
             if cfg.distributed:
                 loss = reduce_tensor(loss, cfg)
 
-
             for m, x in zip([rec_loss_meter, quant_loss_meter, pp_meter],
                             [loss_details[0], loss_details[1], info[0]]):
-                m.update(x.item(), 1) #batch_size = 1 for validation
+                m.update(x.item(), 1)
 
+            # LVE / MVE（batch_size_val=1，直接取 [0]）
+            metric_meter.update(out[0], data.view(data.shape[0], data.shape[1], -1)[0])
 
-    return rec_loss_meter.avg, quant_loss_meter.avg, pp_meter.avg
+    return rec_loss_meter.avg, quant_loss_meter.avg, pp_meter.avg, metric_meter.lve, metric_meter.mve
 
 
 if __name__ == '__main__':

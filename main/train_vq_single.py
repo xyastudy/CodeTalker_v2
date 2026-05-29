@@ -126,12 +126,12 @@ def main_worker(gpu, ngpus_per_node, args):
             writer.add_scalar("train/regions/other_loss", other_loss, epoch_log)
 
         if cfg.evaluate and val_loader and (epoch_log % cfg.eval_freq == 0):
-            rec_loss_val, quant_loss_val, pp_val = validate(val_loader, model, cfg)
+            rec_loss_val, quant_loss_val, pp_val, lve_val, mve_val = validate(val_loader, model, cfg)
             if main_process(cfg):
-                logger.info(f'VAL Epoch: {epoch_log}  rec_loss: {rec_loss_val:.2e}  pp: {pp_val:.2f}')
+                logger.info(f'VAL Epoch: {epoch_log}  rec_loss: {rec_loss_val:.2e}  pp: {pp_val:.2f}  LVE: {lve_val:.4f}mm  MVE: {mve_val:.4f}mm')
                 for val, tag in zip(
-                    [rec_loss_val, quant_loss_val, pp_val],
-                    ["val/rec_loss", "val/quant_loss", "val/perplexity"]
+                    [rec_loss_val, quant_loss_val, pp_val, lve_val, mve_val],
+                    ["val/rec_loss", "val/quant_loss", "val/perplexity", "val/LVE_mm", "val/MVE_mm"]
                 ):
                     writer.add_scalar(tag, val, epoch_log)
 
@@ -212,9 +212,11 @@ def train(train_loader, model, optimizer, epoch, cfg, region_indices):
 
 
 def validate(val_loader, model, cfg):
+    from metrics.vq_metrics import MetricMeter
     rec_loss_meter  = AverageMeter()
     quant_loss_meter = AverageMeter()
     pp_meter        = AverageMeter()
+    metric_meter    = MetricMeter()
     model.eval()
 
     with torch.no_grad():
@@ -231,8 +233,9 @@ def validate(val_loader, model, cfg):
             rec_loss_meter.update(loss_full.item(), 1)
             quant_loss_meter.update(quant_loss.mean().item(), 1)
             pp_meter.update(info[0].item(), 1)
+            metric_meter.update(out[0], data.view(data.shape[0], data.shape[1], -1)[0])
 
-    return rec_loss_meter.avg, quant_loss_meter.avg, pp_meter.avg
+    return rec_loss_meter.avg, quant_loss_meter.avg, pp_meter.avg, metric_meter.lve, metric_meter.mve
 
 
 if __name__ == '__main__':

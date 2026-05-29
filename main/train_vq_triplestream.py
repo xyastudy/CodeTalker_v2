@@ -124,12 +124,12 @@ def main_worker(gpu, ngpus_per_node, args):
             writer.add_scalar("train/regions/other_loss", other_loss, epoch_log)
 
         if cfg.evaluate and val_loader and (epoch_log % cfg.eval_freq == 0):
-            rec_loss_val, quant_loss_val, pp_val = validate(val_loader, model, cfg)
+            rec_loss_val, quant_loss_val, pp_val, lve_val, mve_val = validate(val_loader, model, cfg)
             if main_process(cfg):
-                logger.info(f'VAL Epoch: {epoch_log}  rec_loss: {rec_loss_val:.2e}  pp: {pp_val:.2f}')
+                logger.info(f'VAL Epoch: {epoch_log}  rec_loss: {rec_loss_val:.2e}  pp: {pp_val:.2f}  LVE: {lve_val:.4f}mm  MVE: {mve_val:.4f}mm')
                 for val, tag in zip(
-                    [rec_loss_val, quant_loss_val, pp_val],
-                    ["val/rec_loss", "val/quant_loss", "val/perplexity"]
+                    [rec_loss_val, quant_loss_val, pp_val, lve_val, mve_val],
+                    ["val/rec_loss", "val/quant_loss", "val/perplexity", "val/LVE_mm", "val/MVE_mm"]
                 ):
                     writer.add_scalar(tag, val, epoch_log)
 
@@ -223,12 +223,12 @@ def train(train_loader, model, optimizer, epoch, cfg):
 
 
 def validate(val_loader, model, cfg):
+    from metrics.vq_metrics import MetricMeter
     rec_loss_meter   = AverageMeter()
     quant_loss_meter = AverageMeter()
     pp_meter         = AverageMeter()
+    metric_meter     = MetricMeter()
     model.eval()
-
-    lip_region = eye_region = other_region = None
 
     with torch.no_grad():
         for data, _, template, _, _ in val_loader:
@@ -237,16 +237,19 @@ def validate(val_loader, model, cfg):
 
             full_vertices, emb_loss, info = model(data, template)
 
-            loss_full = nn.L1Loss()(full_vertices.view(data.shape[0], data.shape[1], -1),
-                                    data.view(data.shape[0], data.shape[1], -1))
+            B, T = data.shape[:2]
+            out_flat = full_vertices.view(B, T, -1)
+            gt_flat  = data.view(B, T, -1)
+            loss_full = nn.L1Loss()(out_flat, gt_flat)
             if cfg.distributed:
                 loss_full = reduce_tensor(loss_full, cfg)
 
             rec_loss_meter.update(loss_full.item(), 1)
             quant_loss_meter.update(emb_loss.mean().item(), 1)
             pp_meter.update(info[0].item(), 1)
+            metric_meter.update(out_flat[0], gt_flat[0])
 
-    return rec_loss_meter.avg, quant_loss_meter.avg, pp_meter.avg
+    return rec_loss_meter.avg, quant_loss_meter.avg, pp_meter.avg, metric_meter.lve, metric_meter.mve
 
 
 if __name__ == '__main__':
