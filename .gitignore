@@ -1,2 +1,41 @@
+# ───── 大数据文件（不入库，需手动放置）─────
+vocaset/data_verts.npy
+vocaset/vertices_npy/
+vocaset/wav/
+vocaset/generic_model.pkl
+vocaset/raw_audio_fixed.pkl
+
+# ───── 模型权重 ─────
 *.pth.tar
+*.pth
+*.pt
+checkpoint/
+
+# ───── 训练输出 ─────
+RUN/
+demo/npy/
+demo/output/
+
+# ───── 大归档 ─────
+*.tar.gz
+*.zip
+
+# ───── Python 缓存 ─────
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# ───── 编辑器 ─────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ───── 系统 ─────
+.DS_Store
+Thumbs.db

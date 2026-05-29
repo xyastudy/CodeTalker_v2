@@ -30,14 +30,16 @@ PREDICTOR:
   vertice_dim: 15069
   device: cuda
   period: 30
-  vqvae_pretrained_path: vocaset/vocaset_stage1.pth.tar
+  # vqvae_pretrained_path: vocaset/vocaset_stage1.pth.tar
+  vqvae_pretrained_path: RUN/vocaset/CodeTalker_s1_v2/model/model.pth.tar
   wav2vec2model_path: facebook/wav2vec2-base-960h
   teacher_forcing: True
   num_layers: 6
   n_head: 4 # not used
 
 DEMO:
-  model_path: vocaset/vocaset_stage2.pth.tar
+  # model_path: vocaset/vocaset_stage2.pth.tar
+  model_path: RUN/vocaset/CodeTalker_s2_v2/model/model.pth.tar
   condition: FaceTalk_170725_00137_TA   # should be within train_subjects: FaceTalk_170728_03272_TA FaceTalk_170904_00128_TA FaceTalk_170725_00137_TA FaceTalk_170915_00223_TA FaceTalk_170811_03274_TA FaceTalk_170913_03279_TA FaceTalk_170904_03276_TA FaceTalk_170912_03278_TA
   subject: FaceTalk_170809_00138_TA
   demo_wav_path: demo/wav/man.wav

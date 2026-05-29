@@ -1,28 +1,36 @@
 #!/usr/bin/env python
+"""
+bash scripts/train.sh CodeTalkerV2_s1 config/vocaset/stage1.yaml vocaset s1
+bash scripts/<train.sh|test.sh> <exp_name> config/<vocaset|BIWI>/<stage1|stage2>.yaml <vocaset|BIWI> <s1|s2>
+"""
+
 import os
 import time
+
+import cv2
 import torch
 import torch.backends.cudnn as cudnn
+import torch.distributed as dist
+import torch.multiprocessing as mp
+import torch.nn as nn
 import torch.nn.parallel
 import torch.optim
 import torch.utils.data
-import torch.multiprocessing as mp
-import torch.distributed as dist
 from tensorboardX import SummaryWriter
-import cv2
+from torch.optim.lr_scheduler import StepLR
 
 from base.baseTrainer import poly_learning_rate, reduce_tensor, save_checkpoint
-from base.utilities import get_parser, get_logger, main_process, AverageMeter
-from models import get_model
+from base.utilities import AverageMeter, get_logger, get_parser, main_process
 from metrics.loss import calc_vq_loss
-from torch.optim.lr_scheduler import StepLR
+from models import get_model
+from utils.indices_util import get_region_indices
 
 cv2.ocl.setUseOpenCL(False)
 cv2.setNumThreads(0)
 
 
-def main():
-    args = get_parser()
+def main(cfg_path, opts=None):
+    args = get_parser(cfg_path, opts)
     os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(str(x) for x in args.train_gpu)
     cudnn.benchmark = True
 
@@ -54,6 +62,10 @@ def main_worker(gpu, ngpus_per_node, args):
             cfg.rank = cfg.rank * ngpus_per_node + gpu
         dist.init_process_group(backend=cfg.dist_backend, init_method=cfg.dist_url, world_size=cfg.world_size,
                                 rank=cfg.rank)
+    
+    # ####################### 区域索引准备 ####################### #
+    region_indices = get_region_indices()
+
     # ####################### Model ####################### #
     global logger, writer
     logger = get_logger()
@@ -92,12 +104,18 @@ def main_worker(gpu, ngpus_per_node, args):
     from dataset.data_loader import get_dataloaders
     dataset = get_dataloaders(cfg)
     train_loader = dataset['train']
+    train_sampler = dataset['train_sampler']  # None for single-GPU
     if cfg.evaluate:
         val_loader = dataset['valid']
 
     # ####################### Train ############################# #
     for epoch in range(cfg.start_epoch, cfg.epochs):
-        rec_loss_train, quant_loss_train, pp_train = train(train_loader, model, calc_vq_loss, optimizer, epoch, cfg)
+        # DDP: 每 epoch 重新 shuffle，保证各卡看到不同数据
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch)
+        # 用 split_loss 接收分区域损失
+        rec_loss_train, quant_loss_train, pp_train, split_loss = train(train_loader, model, calc_vq_loss, optimizer, epoch, cfg, region_indices)
+        lip_loss, eye_loss, other_loss = split_loss
         epoch_log = epoch + 1
         if cfg.StepLR:
             scheduler.step()
@@ -110,7 +128,10 @@ def main_worker(gpu, ngpus_per_node, args):
             for m, s in zip([rec_loss_train, quant_loss_train, pp_train],
                             ["train/rec_loss", "train/quant_loss", "train/perplexity"]):
                 writer.add_scalar(s, m, epoch_log)
-
+            # 写入分区域损失
+            writer.add_scalar("train/regions/lip_loss", lip_loss, epoch_log)
+            writer.add_scalar("train/regions/eye_loss", eye_loss, epoch_log)
+            writer.add_scalar("train/regions/other_loss", other_loss, epoch_log)
 
         if cfg.evaluate and (epoch_log % cfg.eval_freq == 0):
             rec_loss_val, quant_loss_val, pp_val = validate(val_loader, model, calc_vq_loss, epoch, cfg)
@@ -131,29 +152,46 @@ def main_worker(gpu, ngpus_per_node, args):
                             )
 
 
-def train(train_loader, model, loss_fn, optimizer, epoch, cfg):
+def train(train_loader, model, loss_fn, optimizer, epoch, cfg, region_indices):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     rec_loss_meter = AverageMeter()
     quant_loss_meter = AverageMeter()
     pp_meter = AverageMeter()
 
+    lip_region, eye_region, other_region = region_indices
+    # ####################### 新增：为三个区域损失创建记录器 ############################# #
+    lip_meter, eye_meter, other_meter = AverageMeter(), AverageMeter(), AverageMeter() 
+
     model.train()
     end = time.time()
     max_iter = cfg.epochs * len(train_loader)
-    for i, (data, template, _, _) in enumerate(train_loader):
+    for i, (data, _, template, _, _) in enumerate(train_loader):
         current_iter = epoch * len(train_loader) + i + 1
         data_time.update(time.time() - end)
         data = data.cuda(cfg.gpu, non_blocking=True)
         template = template.cuda(cfg.gpu, non_blocking=True)
 
-        out, quant_loss, info = model(data, template)
+        out, quant_loss, info, loss_zero = model(data, template)
+        lip_vertices, eye_vertices, other_vertices = info[1] # 从新的 info 结构中取出分区域结果
 
-        # LOSS
-        loss, loss_details = loss_fn(out, data, quant_loss, quant_loss_weight=cfg.quant_loss_weight)
+        gt_vertices = data.view(data.shape[0], data.shape[1], -1, 3)
+        lip_vertices = lip_vertices.view(lip_vertices.shape[0], lip_vertices.shape[1], -1, 3)
+        eye_vertices = eye_vertices.view(eye_vertices.shape[0], eye_vertices.shape[1], -1, 3)
+        other_vertices = other_vertices.view(other_vertices.shape[0], other_vertices.shape[1], -1, 3)
+
+        loss_lip = nn.L1Loss()(lip_vertices[:, :, lip_region], gt_vertices[:, :, lip_region])
+        loss_eye = nn.L1Loss()(eye_vertices[:, :, eye_region], gt_vertices[:, :, eye_region])
+        loss_other = nn.L1Loss()(other_vertices[:, :, other_region], gt_vertices[:, :, other_region])
+
+        rec_loss = loss_lip * 2.0 + loss_eye * 1.0 + loss_other * 1.0  # 给嘴部区域更大的权重
+        # 直接对全脸输出加 L1，确保三个 decoder 的加和结果收敛到真值
+        loss_full = nn.L1Loss()(out, data.view(data.shape[0], data.shape[1], -1))
+        train_loss = loss_full + rec_loss + cfg.quant_loss_weight * quant_loss.mean() + loss_zero * cfg.loss_zero_weight
+        _, loss_details = loss_fn(out, data, quant_loss, quant_loss_weight=cfg.quant_loss_weight)
 
         optimizer.zero_grad()
-        loss.backward()
+        train_loss.backward()
         optimizer.step()
 
         batch_time.update(time.time() - end)
@@ -178,22 +216,27 @@ def train(train_loader, model, loss_fn, optimizer, epoch, cfg):
         remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
 
         if (i + 1) % cfg.print_freq == 0 and main_process(cfg):
-            logger.info('Epoch: [{}/{}][{}/{}] '
-                        'Data: {data_time.val:.3f} ({data_time.avg:.3f}) '
-                        'Batch: {batch_time.val:.3f} ({batch_time.avg:.3f}) '
-                        'Remain: {remain_time} '
-                        'Loss: {loss_meter.val:.4f} '
-                        .format(epoch + 1, cfg.epochs, i + 1, len(train_loader),
-                                batch_time=batch_time, data_time=data_time,
-                                remain_time=remain_time,
-                                loss_meter=rec_loss_meter
-                                ))
+            # logger.info('Epoch: [{}/{}][{}/{}] '
+            #             'Data: {data_time.val:.3f} ({data_time.avg:.3f}) '
+            #             'Batch: {batch_time.val:.3f} ({batch_time.avg:.3f}) '
+            #             'Remain: {remain_time} '
+            #             'Loss: {loss_meter.val:.4f} '
+            #             .format(epoch + 1, cfg.epochs, i + 1, len(train_loader),
+            #                     batch_time=batch_time, data_time=data_time,
+            #                     remain_time=remain_time,
+            #                     loss_meter=rec_loss_meter
+            #                     ))
             for m, s in zip([rec_loss_meter, quant_loss_meter],
-                            ["train_batch/loss", "train_batch/loss_2"]):
+                            ["train_batch/rec_loss", "train_batch/quant_loss"]):
                 writer.add_scalar(s, m.val, current_iter)
             writer.add_scalar('learning_rate', current_lr, current_iter)
 
-    return rec_loss_meter.avg, quant_loss_meter.avg, pp_meter.avg
+        # 记录分区域loss
+        lip_meter.update(loss_lip.item(), data.size(0))
+        eye_meter.update(loss_eye.item(), data.size(0))
+        other_meter.update(loss_other.item(), data.size(0))
+
+    return rec_loss_meter.avg, quant_loss_meter.avg, pp_meter.avg, (lip_meter.avg, eye_meter.avg, other_meter.avg)
 
 
 def validate(val_loader, model, loss_fn, epoch, cfg):
@@ -203,11 +246,11 @@ def validate(val_loader, model, loss_fn, epoch, cfg):
     model.eval()
 
     with torch.no_grad():
-        for i, (data, template, _, _) in enumerate(val_loader):
+        for i, (data, _, template, _, _) in enumerate(val_loader):
             data = data.cuda(cfg.gpu, non_blocking=True)
             template = template.cuda(cfg.gpu, non_blocking=True)
 
-            out, quant_loss, info = model(data, template)
+            out, quant_loss, info, _ = model(data, template)
 
             # LOSS
             loss, loss_details = loss_fn(out, data, quant_loss, quant_loss_weight=cfg.quant_loss_weight)
@@ -225,4 +268,5 @@ def validate(val_loader, model, loss_fn, epoch, cfg):
 
 
 if __name__ == '__main__':
-    main()
+    main() 
+    

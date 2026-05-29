@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+"""
+bash scripts/train.sh CodeTalkerV2_s2 config/vocaset/stage2.yaml vocaset s2
+"""
 import os
 import time
 import numpy as np
@@ -151,7 +154,7 @@ def train(train_loader, model, loss_fn, optimizer, epoch, cfg):
     model.autoencoder.eval()
     end = time.time()
     max_iter = cfg.epochs * len(train_loader)
-    for i, (audio, data, template, one_hot, filename) in enumerate(train_loader):
+    for i, (audio, _, vertice, _, template, one_hot, _) in enumerate(train_loader):
         # pdb.set_trace()
         ####################
         current_iter = epoch * len(train_loader) + i + 1
@@ -159,7 +162,7 @@ def train(train_loader, model, loss_fn, optimizer, epoch, cfg):
 
         #################### cpu to gpu
         audio = audio.cuda(cfg.gpu, non_blocking=True)
-        data = data.cuda(cfg.gpu, non_blocking=True) 
+        data = vertice.cuda(cfg.gpu, non_blocking=True) 
         template = template.cuda(cfg.gpu, non_blocking=True)
         one_hot = one_hot.cuda(cfg.gpu, non_blocking=True)
 
@@ -216,7 +219,7 @@ def validate(val_loader, model, loss_fn, cfg):
 
     train_subjects_list = [i for i in cfg.train_subjects.split(" ")]
     with torch.no_grad():
-        for i, (audio, vertice, template, one_hot_all, file_name) in enumerate(val_loader):
+        for i, (audio, _, vertice, _, template, one_hot_all, file_name) in enumerate(val_loader):
             audio = audio.cuda(cfg.gpu, non_blocking=True)
             one_hot_all = one_hot_all.cuda(cfg.gpu, non_blocking=True)
             vertice = vertice.cuda(cfg.gpu, non_blocking=True)

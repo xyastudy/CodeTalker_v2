@@ -1,0 +1,87 @@
+# Route B: 真三流 VQ 自编码器
+# 三条流从输入顶点就完全隔离：lip/eye/other 各有独立 Encoder + VQ + ConformerDecoder
+# 每个码本只需要建模单一区域的运动模式，perplexity 预期显著低于伪三码本
+
+DATA:
+  dataset: vocaset
+  data_root: ./vocaset/
+  wav_path: wav
+  vertices_path: vertices_npy
+  template_file: templates.pkl
+  read_audio: False
+  train_subjects: FaceTalk_170728_03272_TA FaceTalk_170904_00128_TA FaceTalk_170725_00137_TA FaceTalk_170915_00223_TA FaceTalk_170811_03274_TA FaceTalk_170913_03279_TA FaceTalk_170904_03276_TA FaceTalk_170912_03278_TA
+  val_subjects: FaceTalk_170811_03275_TA FaceTalk_170908_03277_TA
+  test_subjects: FaceTalk_170809_00138_TA FaceTalk_170731_00024_TA
+
+LOSS:
+  quant_loss_weight: 1.0
+  lip_weight: 2.0    # 嘴部重建损失权重（区域运动最关键）
+  eye_weight: 1.0
+  other_weight: 1.0
+
+NETWORK:
+  arch: stage1_vocaset_triplestream
+  in_dim: 15069      # 仅供兼容使用，各流实际用各自区域的 dim
+  hidden_size: 1024
+  num_hidden_layers: 6
+  num_attention_heads: 8
+  intermediate_size: 2048
+  window_size: 1
+  quant_factor: 0
+  face_quan_num: 16
+  neg: 0.2
+  INaffine: False
+  # Conformer 解码器独立配置
+  decoder_num_layers: 4       # 每路 decoder 4 层（比整脸 decoder 少，因为任务更简单）
+  decoder_intermediate_size: 1536
+  conv_kernel_size: 31
+
+VQuantizer:
+  n_embed: 256
+  zquant_dim: 64
+
+TRAIN:
+  use_sgd: False
+  sync_bn: False
+  train_gpu: [0]
+  workers: 10
+  batch_size: 2  # 双卡最小值=2；多卡时每卡 batch = batch_size / n_gpus
+  batch_size_val: 1
+  base_lr: 0.0001
+  StepLR: True
+  warmup_steps: 1
+  adaptive_lr: False
+  factor: 0.3
+  patience: 3
+  threshold: 0.0001
+  poly_lr: False
+  epochs: 200
+  step_size: 20
+  gamma: 0.5
+  start_epoch: 0
+  power: 0.9
+  momentum: 0.9
+  weight_decay: 0.002
+  manual_seed: 131
+  print_freq: 10
+  save_freq: 1
+  save_path:
+  weight:
+  resume:
+  evaluate: True
+  eval_freq: 10
+
+Distributed:
+  dist_url: tcp://127.0.0.1:6703
+  dist_backend: 'nccl'
+  multiprocessing_distributed: True
+  world_size: 1
+  rank: 0
+
+TEST:
+  test_workers: 0
+  test_gpu: [0]
+  test_batch_size: 1
+  save: True
+  model_path:
+  save_folder:

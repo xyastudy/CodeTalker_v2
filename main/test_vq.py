@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+'''
+bash scripts/test.sh CodeTalkerV2_s1 config/vocaset/stage1.yaml vocaset s1
+'''
 import os
 import torch
 import numpy as np
@@ -25,7 +28,7 @@ def main():
     if os.path.isfile(cfg.model_path):
         logger.info("=> loading checkpoint '{}'".format(cfg.model_path))
         checkpoint = torch.load(cfg.model_path, map_location=lambda storage, loc: storage.cpu())
-        load_state_dict(model, checkpoint['state_dict'])
+        load_state_dict(model, checkpoint['state_dict'], strict=False)
         logger.info("=> loaded checkpoint '{}'".format(cfg.model_path))
     else:
         raise RuntimeError("=> no checkpoint flound at '{}'".format(cfg.model_path))
@@ -46,11 +49,11 @@ def test(model, test_loader, save=False):
         os.makedirs(save_folder)
 
     with torch.no_grad():
-        for i, (data, template, _, file_name) in enumerate(test_loader):
-            data = data.cuda(non_blocking=True)
+        for i, (vertice, _, template, _, file_name) in enumerate(test_loader):
+            data = vertice.cuda(non_blocking=True)
             template = template.cuda(non_blocking=True)
 
-            out, _, _ = model(data, template)
+            out, _, _, _ = model(data, template)
 
             out = out.squeeze()
 

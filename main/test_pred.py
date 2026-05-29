@@ -1,4 +1,9 @@
 #!/usr/bin/env python
+
+'''
+sh scripts/test.sh CodeTalker_s2_v2 config/vocaset/stage2.yaml vocaset s2
+'''
+
 import os
 import cv2
 import torch
@@ -48,7 +53,7 @@ def test(model, test_loader):
     train_subjects_list = [i for i in cfg.train_subjects.split(" ")]
 
     with torch.no_grad():
-        for i, (audio, vertice, template, one_hot_all, file_name) in enumerate(test_loader):
+        for i, (audio, audio_lens, vertice, vertice_lens, template, one_hot_all, file_name) in enumerate(test_loader):
             audio = audio.cuda(non_blocking=True)
             one_hot_all = one_hot_all.cuda(non_blocking=True)
             vertice = vertice.cuda(non_blocking=True)
@@ -69,6 +74,8 @@ def test(model, test_loader):
                     prediction = model.predict(audio, template, one_hot)
                     prediction = prediction.squeeze()
                     np.save(os.path.join(save_folder, file_name[0].split(".")[0]+"_condition_"+condition_subject+".npy"), prediction.detach().cpu().numpy())
+
+            print(f"[{i}] 语音合成完成: {file_name}")
 
 
 if __name__ == '__main__':

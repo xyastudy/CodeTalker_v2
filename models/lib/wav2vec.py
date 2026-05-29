@@ -110,6 +110,12 @@ class Wav2Vec2Model(Wav2Vec2Model):
 
         hidden_states = self.feature_projection(hidden_states)
 
+        # ============================================
+        # 兼容新版本 transformers：feature_projection 可能返回 (hidden_states, norm_hidden_states) 这样的 tuple
+        if isinstance(hidden_states, tuple):
+            hidden_states = hidden_states[0]
+        # ============================================
+
         if self.config.apply_spec_augment and self.training:
             batch_size, sequence_length, hidden_size = hidden_states.size()
             if self.config.mask_time_prob > 0:

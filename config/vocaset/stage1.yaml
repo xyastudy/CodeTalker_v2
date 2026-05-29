@@ -11,19 +11,24 @@ DATA:
   
 LOSS:
   quant_loss_weight: 1.0
+  loss_zero_weight: 0.05  # 惩罚 decoder 在非目标区域输出非零值（0.01→0.05，加强区域分化信号）
 
 NETWORK:
   arch: stage1_vocaset
   in_dim: 15069
   hidden_size: 1024
-  num_hidden_layers: 6
+  num_hidden_layers: 6       # 编码器 Transformer 层数
   num_attention_heads: 8
-  intermediate_size: 1536
+  intermediate_size: 2048    # 编码器 FFN 宽度（1536 → 2048，与解码器对齐）
   window_size: 1
   quant_factor: 0
   face_quan_num: 16
   neg: 0.2
   INaffine: False
+  # ——— 解码器独立配置（ConformerDecoder） ———
+  decoder_num_layers: 6      # Conformer 块数（每块含 ConvModule，能力强于同层数 Transformer）
+  decoder_intermediate_size: 2048  # 解码器 FFN 宽度（原来 1536 → 2048）
+  conv_kernel_size: 31       # ConvModule 深度可分离卷积核大小
 
 VQuantizer:
   n_embed: 256
@@ -34,7 +39,7 @@ TRAIN:
   sync_bn: False  # adopt sync_bn or not
   train_gpu: [0]
   workers: 10  # data loader workers
-  batch_size: 1  # batch size for training
+  batch_size: 2  # 双卡最小值=2（单卡也可以用 2）；多卡时每卡 batch = batch_size / n_gpus
   batch_size_val: 1  # batch size for validation during training, memory and speed tradeoff
   base_lr: 0.0001
   StepLR: True

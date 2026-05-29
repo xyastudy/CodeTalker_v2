@@ -1,0 +1,41 @@
+DATA:
+  dataset: vocaset
+  data_root: ./vocaset/
+  wav_path: wav
+  vertices_path: vertices_npy
+  template_file: templates.pkl
+  read_audio: True
+
+  # 这 8 个的顺序就是 one-hot / 类别 id 的顺序（必须固定）
+  train_subjects: FaceTalk_170728_03272_TA FaceTalk_170904_00128_TA FaceTalk_170725_00137_TA FaceTalk_170915_00223_TA FaceTalk_170811_03274_TA FaceTalk_170913_03279_TA FaceTalk_170904_03276_TA FaceTalk_170912_03278_TA
+  val_subjects: FaceTalk_170811_03275_TA FaceTalk_170908_03277_TA
+  test_subjects: FaceTalk_170809_00138_TA FaceTalk_170731_00024_TA
+
+MODEL:
+  name: style_predictor
+  # wav2vec hidden state 维度（base=768）
+  input_dim: 768
+  hidden_dim: 256
+  num_classes: 8
+
+AUDIO:
+  wav2vec2model_path: facebook/wav2vec2-base-960h
+  sample_rate: 16000
+  freeze_wav2vec: True   # 只训练 predictor，不训练 wav2vec
+
+TRAIN:
+  device: cuda
+  workers: 10
+  batch_size: 16
+  epochs: 100
+  lr: 0.0001
+  weight_decay: 0.0
+  seed: 131
+  print_freq: 10
+  eval_freq: 20
+  save_dir: StylePredictor/checkpoint
+  ckpt_name: style_predictor_8sub.pth
+
+EVAL:
+  topk: 3
+  num_examples_to_print: 3
