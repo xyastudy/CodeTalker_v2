@@ -188,7 +188,9 @@ def train(train_loader, model, optimizer, epoch, cfg, region_indices):
         else:
             current_lr = optimizer.param_groups[0]['lr']
 
-        # 记录 (与 baseline 一致：rec_loss = 全脸 L1, quant_loss = VQ 损失)
+        # 记录全脸 L1（与 baseline/val 量级一致，方便 WandB 对比）
+        with torch.no_grad():
+            loss_full = nn.L1Loss()(out, data.view(B, T, -1))
         rec_loss_meter.update(loss_full.item(), 1)
         quant_loss_meter.update(quant_loss.mean().item(), 1)
         pp_meter.update(info[0].item(), 1)
