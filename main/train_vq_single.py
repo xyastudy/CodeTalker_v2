@@ -164,10 +164,7 @@ def train(train_loader, model, optimizer, epoch, cfg, region_indices):
         out, quant_loss, info = model(data, template)
         # info[0] = perplexity
 
-        # 全脸重建损失（对标 baseline）
-        loss_full = nn.L1Loss()(out, data.view(data.shape[0], data.shape[1], -1))
-
-        # 区域加权重建损失（额外施加，引导模型关注嘴部）
+        # 区域加权重建损失：lip/eye/other 三块合起来覆盖全脸，不再单独加全脸 L1 避免重复计算
         B, T = data.shape[:2]
         out_3d  = out.view(B, T, -1, 3)
         gt_3d   = data.view(B, T, -1, 3)
@@ -177,7 +174,7 @@ def train(train_loader, model, optimizer, epoch, cfg, region_indices):
         loss_other = nn.L1Loss()(out_3d[:, :, other_region], gt_3d[:, :, other_region])
         loss_region = lip_w * loss_lip + eye_w * loss_eye + other_w * loss_other
 
-        train_loss = loss_full + loss_region + cfg.quant_loss_weight * quant_loss.mean()
+        train_loss = loss_region + cfg.quant_loss_weight * quant_loss.mean()
 
         optimizer.zero_grad()
         train_loss.backward()
